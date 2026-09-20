@@ -17,11 +17,11 @@ type Alert struct {
 // seenAlertIDs is used by DedupeAlerts.
 // NOTE: each independent call to DedupeAlerts should be treated as a fresh
 // batch — it should NOT remember IDs seen in a previous, unrelated call.
-var seenAlertIDs = map[string]bool{}
 
 // DedupeAlerts returns only the alerts whose ID hasn't been seen before
 // within this batch.
 func DedupeAlerts(alerts []Alert) []Alert {
+	var seenAlertIDs = map[string]bool{}
 	result := []Alert{}
 	for _, a := range alerts {
 		if !seenAlertIDs[a.ID] {
@@ -43,9 +43,9 @@ func DedupeAlerts(alerts []Alert) []Alert {
 func ComputeSeverity(errorRate float64) string {
 	if errorRate < 0.05 {
 		return "low"
-	} else if errorRate <= 0.15 {
+	} else if errorRate < 0.15 {
 		return "medium"
-	} else if errorRate <= 0.30 {
+	} else if errorRate < 0.30 {
 		return "high"
 	}
 	return "critical"
@@ -67,7 +67,7 @@ func RetryWithBackoff(fn func() error, retries int, baseDelay time.Duration) err
 		delay *= 2
 	}
 	// bug: swallows the failure instead of returning lastErr
-	return nil
+	return lastErr
 }
 
 type LogEvent struct {
@@ -91,6 +91,6 @@ func ParseLogLine(line string) (LogEvent, error) {
 		Timestamp: parts[0],
 		Level:     parts[1],
 		Service:   parts[2],
-		Message:   parts[3], // bug: only grabs the first word of the message
+		Message:   strings.Join(parts[3:], " "), // bug: only grabs the first word of the message
 	}, nil
 }
