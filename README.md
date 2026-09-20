@@ -1,56 +1,89 @@
-# Debug Practice Exercise (Go)
+# Alerting Utilities in Go
 
-A small `alerting` package has a handful of bugs. Your job: get `go test -v ./...`
-fully green by fixing `alerting.go` only — do not edit `alerting_test.go`.
+A small Go package for practicing debugging with realistic alert-processing
+helpers. It covers four common tasks: deduplicating alerts, assigning severity
+from an error rate, retrying transient failures, and parsing structured log
+lines.
 
-## Setup
+The repository contains the corrected implementation and a test suite that
+documents its expected behavior. A summary of the original bugs and their
+fixes is available in [`DEBUG_REPORT_001.md`](DEBUG_REPORT_001.md).
+Go back in commit history to see the original bugs and their fixes.
 
-Requires Go installed (1.21+).
+## Requirements
+
+- Go 1.22.2 or later
+
+No third-party dependencies are required.
+
+## Run the tests
+
+From the repository root:
 
 ```bash
 go test -v ./...
 ```
 
-You should see some tests failing. Read the failure output carefully — it
-tells you the expected vs actual value, which is usually enough to point
-you at the bug without needing to guess blindly.
+## Package overview
 
-## How to approach it (practice this process, not just the fixes)
+### Deduplicate alerts
 
-1. Run `go test -v ./...` first, before touching any code, and read every
-   failure message.
-2. Pick one failing test at a time. Read the doc comment above the
-   relevant function in `alerting.go` — it describes the *intended*
-   behavior.
-3. Form a hypothesis about the bug before changing code. Say it out loud
-   (or write it down): "I think this fails because ___."
-4. Make the smallest possible fix, then rerun `go test -v ./...` to
-   confirm — don't fix all four at once and hope.
-5. Once everything's green, go back and explain out loud *why* each bug
-   happened — this is the part interviewers actually care about, not
-   just that you got it working.
+`DedupeAlerts` removes repeated alert IDs within a single batch while
+preserving the first occurrence and its input order. Each call starts with a
+fresh deduplication scope.
 
-## What's being tested (don't peek until you're stuck)
+```go
+alerts := []alerting.Alert{
+	{ID: "db-1", Message: "database unavailable"},
+	{ID: "db-1", Message: "database unavailable"},
+	{ID: "api-1", Message: "high latency"},
+}
 
-There are 4 distinct bugs, each a somewhat classic/realistic category:
+unique := alerting.DedupeAlerts(alerts) // two alerts
+```
 
-- Shared/package-level state leaking across calls that should be
-  independent (a very common Go footgun — package vars holding state
-  that should really be scoped to a single call or struct)
-- An off-by-one / boundary condition
-- A function that fails silently instead of surfacing an error
-  (returns `nil` when it should return the real error)
-- A string-parsing assumption (`strings.Fields`) that breaks once the
-  message has more than one word
+### Compute severity
 
-If you get stuck for more than ~10-15 minutes on any one, that's a fine
-moment to ask for a hint rather than grinding — in a real assessment
-you'd likely timebox similarly.
+`ComputeSeverity` maps an error rate to a label using these boundaries:
 
-## Bonus, if you finish early
+| Error rate | Severity |
+| --- | --- |
+| `< 0.05` | `low` |
+| `0.05` to `< 0.15` | `medium` |
+| `0.15` to `< 0.30` | `high` |
+| `>= 0.30` | `critical` |
 
-The `DedupeAlerts` bug is fixable a few different ways in Go — a local
-map instead of a package var is the minimal fix, but think about how
-you'd design this if it needed to track real cross-request state safely
-(e.g. concurrent goroutines calling it at once). What would break, and
-what would you reach for instead of a plain `map[string]bool`?
+### Retry an operation
+
+`RetryWithBackoff` calls a function up to the requested number of attempts.
+The delay starts at `baseDelay` and doubles after each failed attempt. It
+returns immediately on success or returns the last error when all attempts
+fail.
+
+```go
+err := alerting.RetryWithBackoff(func() error {
+	return sendAlert()
+}, 3, 100*time.Millisecond)
+```
+
+### Parse a log line
+
+`ParseLogLine` converts a whitespace-delimited line into a `LogEvent`:
+
+```text
+2024-01-15T10:30:00Z ERROR story-view-api database connection timeout
+```
+
+The first three fields become the timestamp, level, and service. Everything
+after them becomes the message, so multi-word messages are preserved. Lines
+with fewer than four fields return an error.
+
+## Project layout
+
+```text
+.
+├── alerting.go          # Package implementation
+├── alerting_test.go     # Behavioral tests
+├── DEBUG_REPORT_001.md  # Original bug report and fixes
+└── go.mod
+```
